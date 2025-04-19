@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSON Schema Generator</title>
+    <style>
+        .container {
+            display: flex;
+            gap: 20px;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+        }
+        .json-editor, .chat-container {
+            flex: 1;
+            border: 1px solid #ddd;
+            padding: 15px;
+            border-radius: 5px;
+            background: #f9f9f9;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        #json-display {
+            height: 400px;
+            overflow: auto;
+            background: white;
+            padding: 10px;
+            border: 1px solid #ccc;
+            white-space: pre;
+            font-family: monospace;
+            border-radius: 4px;
+        }
+        #chat-messages {
+            height: 300px;
+            overflow-y: auto;
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            padding: 10px;
+            background: white;
+            border-radius: 4px;
+        }
+        .message {
+            margin-bottom: 10px;
+            padding: 8px 12px;
+            border-radius: 5px;
+            max-width: 80%;
+        }
+        .user {
+            background: #e3f2fd;
+            margin-left: auto;
+            border: 1px solid #bbdefb;
+        }
+        .assistant {
+            background: #f1f1f1;
+            margin-right: auto;
+            border: 1px solid #e0e0e0;
+        }
+        .error {
+            background: #ffebee;
+            color: #d32f2f;
+            border: 1px solid #ef9a9a;
+        }
+        .warning {
+            background: #fff8e1;
+            color: #ff8f00;
+            border: 1px solid #ffe082;
+        }
+        .input-area {
+            display: flex;
+            gap: 10px;
+            flex-direction: column;
+        }
+        #user-input {
+            flex: 1;
+            height: 80px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            resize: vertical;
+        }
+        #send-btn, #submit-missing-fields {
+            padding: 8px 16px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        #send-btn:hover, #submit-missing-fields:hover {
+            background: #388E3C;
+        }
+        #missing-fields-prompt {
+            display: none;
+            margin-top: 10px;
+            padding: 10px;
+            background: #fffde7;
+            border: 1px solid #fff9c4;
+            border-radius: 4px;
+        }
+        #missing-fields-list {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+        #missing-fields-list li {
+            margin-bottom: 8px;
+        }
+        #missing-fields-list input {
+            padding: 4px 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 70%;
+        }
+        h2 {
+            margin-top: 0;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="json-editor">
+            <h2>JSON Schema</h2>
+            <div id="json-display" contenteditable="true"></div>
+            <div id="schema-errors" class="error"></div>
+        </div>
+        
+        <div class="chat-container">
+            <h2>Chat</h2>
+            <div id="chat-messages"></div>
+            <div class="input-area">
+                <textarea id="user-input" placeholder="Опишите структуру данных или правки к схеме..."></textarea>
+                <button id="send-btn">Отправить</button>
+            </div>
+            <div id="missing-fields-prompt">
+                <p>Пожалуйста, укажите информацию для следующих полей:</p>
+                <ul id="missing-fields-list"></ul>
+                <button id="submit-missing-fields">Отправить</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const chatMessages = document.getElementById('chat-messages');
+            const userInput = document.getElementById('user-input');
+            const sendBtn = document.getElementById('send-btn');
+            const jsonDisplay = document.getElementById('json-display');
+            const schemaErrors = document.getElementById('schema-errors');
+            const missingFieldsPrompt = document.getElementById('missing-fields-prompt');
+            const missingFieldsList = document.getElementById('missing-fields-list');
+            const submitMissingFields = document.getElementById('submit-missing-fields');
+
+            let currentSchema = null;
+            let missingFields = [];
+            let integrationSteps = [];
+
+            function addMessage(role, content, isWarning = false) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${role} ${isWarning ? 'warning' : ''}`;
+                messageDiv.textContent = content;
+                chatMessages.appendChild(messageDiv);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+
+            function updateJsonDisplay(schema) {
+                try {
+                    const parsed = typeof schema === 'string' ? JSON.parse(schema) : schema;
+                    jsonDisplay.textContent = JSON.stringify(parsed, null, 2);
+                    currentSchema = parsed;
+                    
+                    if (parsed && parsed.integrationSteps) {
+                        integrationSteps = parsed.integrationSteps;
+                    }
+                    
+                    schemaErrors.textContent = '';
+                } catch (e) {
+                    jsonDisplay.textContent = "Ошибка в JSON: " + e.message;
+                    schemaErrors.textContent = "Ошибка валидации: " + e.message;
+                }
+            }
+
+            function showMissingFieldsPrompt(fields) {
+                missingFields = fields;
+                missingFieldsList.innerHTML = '';
+                fields.forEach(field => {
+                    const li = document.createElement('li');
+                    li.innerHTML = `<strong>${field}:</strong> <input type="text" id="field-${field}" placeholder="Введите значение">`;
+                    missingFieldsList.appendChild(li);
+                });
+                missingFieldsPrompt.style.display = 'block';
+                userInput.disabled = true;
+                sendBtn.disabled = true;
+            }
+
+            function hideMissingFieldsPrompt() {
+                missingFieldsPrompt.style.display = 'none';
+                userInput.disabled = false;
+                sendBtn.disabled = false;
+            }
+
+            async function sendRequest(prompt, action = 'generate') {
+                addMessage('user', prompt);
+                userInput.value = '';
+                jsonDisplay.textContent = "Генерация схемы...";
+
+                try {
+                    const response = await fetch('/generate-schema', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ prompt, action })
+                    });
+
+                    const data = await response.json();
+                    
+                    if (!response.ok) {
+                        addMessage('error', data.error || 'Ошибка API');
+                        jsonDisplay.textContent = data.response || "Нет данных";
+                        return;
+                    }
+                    
+                    if (data.error) {
+                        addMessage('error', data.error);
+                        jsonDisplay.textContent = data.response || "Ошибка в данных";
+                        return;
+                    }
+
+                    if (data.missing_fields) {
+                        addMessage('assistant', 'Требуется уточнение для недостающих полей');
+                        showMissingFieldsPrompt(data.missing_fields);
+                        updateJsonDisplay(data.schema);
+                        return;
+                    }
+
+                    updateJsonDisplay(data.schema);
+                    
+                    if (data.warning) {
+                        addMessage('assistant', data.warning, true);
+                    } else {
+                        addMessage('assistant', action === 'generate' 
+                            ? 'JSON Schema сгенерирована' 
+                            : 'JSON Schema обновлена');
+                    }
+
+                } catch (error) {
+                    addMessage('error', 'Ошибка соединения: ' + error.message);
+                    jsonDisplay.textContent = "Не удалось получить схему";
+                }
+            }
+
+            async function checkIntegrationStep(step) {
+                try {
+                    const response = await fetch('/check-integration', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ step })
+                    });
+                    
+                    const data = await response.json();
+                    if (!data.exists) {
+                        addMessage('assistant', `Шаг интеграции "${step}" не найден. Доступные шаги: ${data.available_steps?.join(', ') || 'нет'}`, true);
+                    }
+                } catch (error) {
+                    console.error('Ошибка проверки шага интеграции:', error);
+                }
+            }
+
+            sendBtn.addEventListener('click', () => {
+                const prompt = userInput.value.trim();
+                if (!prompt) return;
+                
+                const action = currentSchema ? 'edit' : 'generate';
+                sendRequest(prompt, action);
+            });
+
+            submitMissingFields.addEventListener('click', () => {
+                const fieldsInfo = missingFields.map(field => {
+                    const value = document.getElementById(`field-${field}`).value;
+                    return `${field}: ${value}`;
+                }).join(', ');
+                
+                sendRequest(`Добавь следующие поля: ${fieldsInfo}`, 'edit');
+                hideMissingFieldsPrompt();
+            });
+
+            userInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendBtn.click();
+                }
+            });
+        });
+    </script>
+</body>
+</html>
